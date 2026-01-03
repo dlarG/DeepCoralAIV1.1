@@ -10,9 +10,22 @@ import base64
 import json
 from ultralytics import YOLO
 
-app = Flask(__name__)
-CORS(app)
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
+app = Flask(__name__)
+
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://your-frontend.vercel.app",  # Will update after deployment
+            "https://*.vercel.app"  # Allow all Vercel subdomains
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+port = int(os.environ.get("PORT", 5000))
 # Configuration - Match training settings
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -504,4 +517,4 @@ if __name__ == '__main__':
     print(f"⭐ COTS confidence threshold: {COTS_CONF_THRESHOLD}")
     print(f"🪸 Number of coral classes: {len(CORAL_CLASSES)}")
     print(f"⭐ Number of COTS classes: {len(COTS_CLASSES)}")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port)
