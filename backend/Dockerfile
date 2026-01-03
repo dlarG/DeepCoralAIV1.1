@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (for better caching)
+# Copy requirements
 COPY requirements.txt .
 
 # Install Python dependencies
@@ -22,8 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port (Railway uses PORT environment variable)
+# Create directory for models
+RUN mkdir -p models/segment models/cots
+
+# Expose port
 EXPOSE 8080
 
-# Run the application with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]
+# Run the application
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "app:app"]
