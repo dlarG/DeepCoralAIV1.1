@@ -18,13 +18,13 @@ CORS(app, resources={
     r"/api/*": {
         "origins": [
             "http://localhost:3000",
-            "https://your-frontend.vercel.app",  # Will update after deployment
-            "https://*.vercel.app"  # Allow all Vercel subdomains
-        ],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
+            "https://acb-marine.vercel.app",
+            "https://*.vercel.app"
+        ]
     }
 })
+
+
 port = int(os.environ.get("PORT", 5000))
 # Configuration - Match training settings
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -1,7 +1,7 @@
 # Use Python 3.9 slim image
 FROM python:3.9-slim
 
-# Install system dependencies
+# Install system dependencies (OpenCV + Torch deps)
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -13,17 +13,17 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (for better caching)
-COPY requirements.txt .
+# Copy backend requirements
+COPY backend/requirements.txt ./requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy backend application code ONLY
+COPY backend/ .
 
-# Expose port (Railway uses PORT environment variable)
+# Railway provides PORT dynamically
 EXPOSE 8080
 
-# Run the application with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]
+# Start app with gunicorn
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 app:app"]
