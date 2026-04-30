@@ -13,6 +13,7 @@ function AppPage() {
   const [activeMode, setActiveMode] = useState("segmentation");
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [selectedQuadrat, setSelectedQuadrat] = useState(0); // For multiple quadrats
   const fileInputRef = useRef(null);
 
   // Image validation
@@ -53,6 +54,7 @@ function AppPage() {
     setError(null);
     setUploadProgress(0);
     setActiveTab("overlay");
+    setSelectedQuadrat(0);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -140,6 +142,11 @@ function AppPage() {
       const blob = await response.blob();
       formData.append("image", blob, "image.png");
 
+      // Add auto-crop parameter for segmentation mode
+      if (activeMode === "segmentation") {
+        formData.append("use_auto_crop", "true");
+      }
+
       let endpoint = `${API_BASE}/segment`;
       if (activeMode === "cots_counter") {
         endpoint = `${API_BASE}/cots-counter`;
@@ -157,6 +164,7 @@ function AppPage() {
 
       const data = await result.json();
       setResults(data);
+      setSelectedQuadrat(0); // Reset to first quadrat
 
       if (activeMode === "cots_counter") {
         setActiveTab("annotated");
@@ -170,7 +178,38 @@ function AppPage() {
     }
   };
 
+  // Get the current result data based on mode and selected quadrat
+  const getCurrentResult = () => {
+    if (!results) return null;
+
+    if (activeMode === "segmentation" && results.results) {
+      // New structure with multiple quadrats
+      return results.results[selectedQuadrat] || results.results[0];
+    }
+
+    // COTS counter or old structure
+    return results;
+  };
+
+  // Get images for current result
+  const getCurrentImages = () => {
+    const currentResult = getCurrentResult();
+    if (!currentResult) return null;
+
+    return currentResult.images || results.images;
+  };
+
+  // Get statistics for current result
+  const getCurrentStatistics = () => {
+    const currentResult = getCurrentResult();
+    if (!currentResult) return null;
+
+    return currentResult.statistics || results.statistics;
+  };
+
   const StatisticsPanel = ({ statistics, mode }) => {
+    if (!statistics) return null;
+
     if (mode === "cots_counter") {
       return (
         <div className="app-statistics-panel">
@@ -246,11 +285,46 @@ function AppPage() {
     );
   };
 
+  // Quadrat selector component
+  const QuadratSelector = () => {
+    if (!results || !results.results || results.results.length <= 1)
+      return null;
+
+    return (
+      <div className="app-quadrat-selector">
+        <h3>Detected Quadrats ({results.total_quadrats})</h3>
+        <div className="app-quadrat-grid">
+          {results.results.map((result, index) => (
+            <button
+              key={index}
+              className={`app-quadrat-btn ${
+                selectedQuadrat === index ? "active" : ""
+              }`}
+              onClick={() => setSelectedQuadrat(index)}
+            >
+              <img
+                src={result.images.original}
+                alt={`Quadrat ${index + 1}`}
+                className="app-quadrat-thumbnail"
+              />
+              <span className="app-quadrat-label">Quadrat {index + 1}</span>
+              {result.statistics?.total_coral && (
+                <span className="app-quadrat-coverage">
+                  {result.statistics.total_coral.percentage}% coral
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const getTabOptions = () => {
     if (activeMode === "cots_counter") {
       return [
-        { key: "annotated", label: "Detections", icon: "⭐" },
-        { key: "original", label: "Original", icon: "🖼️" },
+        { key: "annotated", label: "Detections" },
+        { key: "original", label: "Original" },
       ];
     }
     return [
@@ -261,6 +335,8 @@ function AppPage() {
   };
 
   const isNavDisabled = results || loading;
+  const currentImages = getCurrentImages();
+  const currentStatistics = getCurrentStatistics();
 
   return (
     <div className="app-container">
@@ -280,7 +356,6 @@ function AppPage() {
                 onClick={() => handleModeSwitch("segmentation")}
                 disabled={isNavDisabled}
               >
-                <span className="app-mode-icon">🎯</span>
                 Segmentation
               </button>
               <button
@@ -290,7 +365,6 @@ function AppPage() {
                 onClick={() => handleModeSwitch("cots_counter")}
                 disabled={isNavDisabled}
               >
-                <span className="app-mode-icon">⭐</span>
                 COTS Counter
               </button>
               <button
@@ -300,7 +374,6 @@ function AppPage() {
                 onClick={() => handleModeSwitch("bleaching")}
                 disabled={isNavDisabled}
               >
-                <span className="app-mode-icon">🌡️</span>
                 Bleaching
               </button>
             </div>
@@ -313,7 +386,6 @@ function AppPage() {
                 onClick={clearAll}
                 title="Clear all results"
               >
-                <span className="app-clear-icon">🗑️</span>
                 Clear All
               </button>
             )}
@@ -336,20 +408,6 @@ function AppPage() {
                   <p>
                     Select or drag & drop your underwater image for analysis
                   </p>
-                </div>
-                <div className="app-upload-stats">
-                  <div className="app-upload-stat">
-                    <span className="app-stat-icon">📏</span>
-                    <span>Max 15MB</span>
-                  </div>
-                  <div className="app-upload-stat">
-                    <span className="app-stat-icon">🎯</span>
-                    <span>High Accuracy</span>
-                  </div>
-                  <div className="app-upload-stat">
-                    <span className="app-stat-icon">⚡</span>
-                    <span>Fast Processing</span>
-                  </div>
                 </div>
               </div>
 
@@ -455,7 +513,7 @@ function AppPage() {
                     ) : (
                       <>
                         <span className="app-btn-icon">
-                          {activeMode === "segmentation" ? "🎯" : "⭐"}
+                          {activeMode === "segmentation"}
                         </span>
                         {activeMode === "segmentation"
                           ? "Run Segmentation"
@@ -572,6 +630,9 @@ function AppPage() {
                 <div className="app-results-badge success">
                   <span className="badge-icon">✓</span>
                   Completed
+                  {results.auto_crop_applied && (
+                    <span className="badge-crop"> • Auto-cropped</span>
+                  )}
                 </div>
               </div>
               <div className="app-results-actions">
@@ -583,6 +644,9 @@ function AppPage() {
                 </button>
               </div>
             </div>
+
+            {/* Quadrat Selector for multiple quadrats */}
+            <QuadratSelector />
 
             <div className="app-results-tabs">
               <div className="app-tab-nav">
@@ -612,6 +676,8 @@ function AppPage() {
                         {activeTab === "mask" && "Segmentation Mask"}
                         {activeTab === "annotated" && "COTS Detections"}
                         {activeTab === "original" && "Original Image"}
+                        {results.auto_crop_applied &&
+                          ` (Quadrat ${selectedQuadrat + 1})`}
                       </h3>
                       <div className="app-viewer-actions">
                         <button className="app-viewer-btn" title="Zoom in">
@@ -623,19 +689,21 @@ function AppPage() {
                       </div>
                     </div>
                     <div className="app-image-container">
-                      <img
-                        src={
-                          results.images[activeTab] || results.images.original
-                        }
-                        alt={`${activeTab} view`}
-                        className="app-result-image"
-                      />
+                      {currentImages && (
+                        <img
+                          src={
+                            currentImages[activeTab] || currentImages.original
+                          }
+                          alt={`${activeTab} view`}
+                          className="app-result-image"
+                        />
+                      )}
                     </div>
                   </div>
 
                   <div className="app-results-sidebar">
                     <StatisticsPanel
-                      statistics={results.statistics}
+                      statistics={currentStatistics}
                       mode={activeMode}
                     />
 
@@ -676,7 +744,7 @@ function AppPage() {
             {/* Summary Section */}
             <div className="app-summary-section">
               {activeMode === "segmentation" &&
-                results.statistics?.total_coral && (
+                currentStatistics?.total_coral && (
                   <div className="app-summary-card">
                     <div className="app-summary-header">
                       <h3>Coverage Summary</h3>
@@ -689,14 +757,14 @@ function AppPage() {
                             Total Coral Coverage
                           </span>
                           <span className="app-summary-value">
-                            {results.statistics.total_coral.percentage}%
+                            {currentStatistics.total_coral.percentage}%
                           </span>
                         </div>
                         <div className="app-summary-progress">
                           <div
                             className="app-summary-progress-bar"
                             style={{
-                              width: `${results.statistics.total_coral.percentage}%`,
+                              width: `${currentStatistics.total_coral.percentage}%`,
                             }}
                           ></div>
                         </div>
@@ -708,10 +776,10 @@ function AppPage() {
                           </span>
                           <span className="app-summary-value">
                             {
-                              Object.keys(results.statistics).filter(
+                              Object.keys(currentStatistics).filter(
                                 (key) =>
                                   key !== "total_coral" &&
-                                  results.statistics[key].percentage > 0
+                                  currentStatistics[key].percentage > 0
                               ).length
                             }
                           </span>
@@ -724,7 +792,7 @@ function AppPage() {
                           </span>
                           <span className="app-summary-value">
                             {(() => {
-                              const entries = Object.entries(results.statistics)
+                              const entries = Object.entries(currentStatistics)
                                 .filter(([key]) => key !== "total_coral")
                                 .sort(
                                   (a, b) => b[1].percentage - a[1].percentage
@@ -741,7 +809,7 @@ function AppPage() {
                 )}
 
               {activeMode === "cots_counter" &&
-                results.statistics?.total_count && (
+                currentStatistics?.total_count && (
                   <div className="app-summary-card">
                     <div className="app-summary-header">
                       <h3>COTS Detection Summary</h3>
@@ -754,7 +822,7 @@ function AppPage() {
                             Total COTS Detected
                           </span>
                           <span className="app-summary-value large">
-                            {results.statistics.total_count.count}
+                            {currentStatistics.total_count.count}
                           </span>
                         </div>
                       </div>
@@ -764,8 +832,8 @@ function AppPage() {
                             Avg Confidence
                           </span>
                           <span className="app-summary-value">
-                            {results.statistics.average_confidence
-                              ?.percentage || 95}
+                            {currentStatistics.average_confidence?.percentage ||
+                              95}
                             %
                           </span>
                         </div>

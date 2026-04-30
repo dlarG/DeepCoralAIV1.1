@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import AppPage from "./components/AppPage";
 import Home from "./components/Home";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 
 function HomePage() {
   return <Home />;

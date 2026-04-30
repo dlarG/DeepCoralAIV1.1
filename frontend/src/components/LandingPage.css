@@ -1007,3 +1007,76 @@ body {
     text-align: center;
   }
 }
+
+/* Quadrat Selector Styles */
+.app-quadrat-selector {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.app-quadrat-selector h3 {
+  color: #e0e0e0;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.app-quadrat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.app-quadrat-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+}
+
+.app-quadrat-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(74, 144, 226, 0.5);
+  transform: translateY(-2px);
+}
+
+.app-quadrat-btn.active {
+  background: rgba(74, 144, 226, 0.15);
+  border-color: #4a90e2;
+  box-shadow: 0 0 15px rgba(74, 144, 226, 0.3);
+}
+
+.app-quadrat-thumbnail {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.app-quadrat-label {
+  display: block;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.app-quadrat-coverage {
+  display: block;
+  color: #4caf50;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Badge crop indicator */
+.badge-crop {
+  color: #4a90e2;
+  font-size: 12px;
+}

@@ -24,7 +24,6 @@ CORS(app, resources={
     }
 })
 
-
 port = int(os.environ.get("PORT", 5000))
 # Configuration - Match training settings
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -32,14 +31,17 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # Model paths
 SEGMENTATION_MODEL_PATH = "models/segment/CORAL_segment.pt"
 COTS_MODEL_PATH = "models/cots/COTS_counter.pt"
+AUTO_CROP_MODEL_PATH = "models/crop/best.pt"  # Add auto-crop model path
 
 IMG_SIZE = 640  # Match training imgsz=640
 CONF_THRESHOLD = 0.25  # Standard YOLO confidence threshold
 COTS_CONF_THRESHOLD = 0.5  # Higher confidence for COTS detection
+CROP_CONF_THRESHOLD = 0.25  # Confidence threshold for quadrat detection
 
 # Create directories
 os.makedirs('models/segment', exist_ok=True)
 os.makedirs('models/cots', exist_ok=True)
+os.makedirs('models/crop', exist_ok=True)  # Directory for crop model
 os.makedirs('uploads', exist_ok=True)
 
 # Load models
@@ -61,6 +63,15 @@ def load_cots_model():
         print(f"Failed to load COTS model: {e}")
         return None
 
+def load_auto_crop_model():
+    try:
+        model = YOLO(AUTO_CROP_MODEL_PATH)
+        model.to(DEVICE)
+        return model
+    except Exception as e:
+        print(f"Failed to load auto-crop model: {e}")
+        return None
+
 # Initialize models
 try:
     segmentation_model = load_segmentation_model()
@@ -75,6 +86,13 @@ try:
 except Exception as e:
     print(f"❌ COTS model loading failed: {e}")
     cots_model = None
+
+try:
+    auto_crop_model = load_auto_crop_model()
+    print("✅ Auto-crop model loaded successfully!")
+except Exception as e:
+    print(f"❌ Auto-crop model loading failed: {e}")
+    auto_crop_model = None
 
 # Coral class mapping - Match your training class names exactly
 CORAL_CLASSES = {
@@ -92,6 +110,144 @@ CORAL_CLASSES = {
 COTS_CLASSES = {
     0: {"name": "cots", "display_name": "Crown-of-Thorns Starfish", "color": [255, 0, 0]}
 }
+
+# Auto-crop functions (from your first code)
+def order_points(pts):
+    """Order points starting from top-left"""
+    rect = np.zeros((4, 2), dtype="float32")
+    
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+    
+    return rect
+
+def four_point_transform(image, pts, width=None, height=None):
+    """Apply perspective transform to rectify quadrat"""
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+    
+    if width is None or height is None:
+        widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+        maxWidth = max(int(widthA), int(widthB))
+        
+        heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        maxHeight = max(int(heightA), int(heightB))
+        
+        width = maxWidth if width is None else width
+        height = maxHeight if height is None else height
+    
+    dst = np.array([
+        [0, 0],
+        [width - 1, 0],
+        [width - 1, height - 1],
+        [0, height - 1]
+    ], dtype="float32")
+    
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, M, (width, height))
+    
+    return warped
+
+def enhance_contour_detection(mask):
+    """Enhance mask for better contour detection"""
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.dilate(mask, kernel, iterations=1)
+    return mask
+
+def auto_crop_quadrats(image, conf_threshold=0.25):
+    """
+    Detect and rectify quadrats in the image using auto-crop model.
+    Returns list of cropped quadrat images and their bounding boxes.
+    """
+    if auto_crop_model is None:
+        print("Auto-crop model not loaded, returning original image")
+        return [image], []
+    
+    try:
+        # Run auto-crop model
+        results = auto_crop_model(image, conf=conf_threshold, verbose=False)
+        
+        cropped_images = []
+        crop_info = []
+        
+        if results[0].masks is not None:
+            masks = results[0].masks.data.cpu().numpy()
+            boxes = results[0].boxes.data.cpu().numpy()
+            
+            print(f"Found {len(masks)} quadrats in image")
+            
+            for i, (mask, box) in enumerate(zip(masks, boxes)):
+                try:
+                    x1, y1, x2, y2, conf, cls = box
+                    
+                    # Process mask
+                    mask_binary = (mask > 0.5).astype(np.uint8) * 255
+                    mask_resized = cv2.resize(mask_binary, (image.shape[1], image.shape[0]))
+                    mask_enhanced = enhance_contour_detection(mask_resized)
+                    
+                    # Find contours
+                    contours, _ = cv2.findContours(mask_enhanced, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if contours:
+                        largest_contour = max(contours, key=cv2.contourArea)
+                        
+                        # Get quadrilateral points
+                        epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+                        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+                        
+                        points = None
+                        
+                        if len(approx) == 4:
+                            points = approx.reshape(4, 2).astype(np.float32)
+                        elif len(approx) > 4:
+                            hull = cv2.convexHull(largest_contour)
+                            epsilon = 0.01 * cv2.arcLength(hull, True)
+                            approx_hull = cv2.approxPolyDP(hull, epsilon, True)
+                            
+                            if len(approx_hull) == 4:
+                                points = approx_hull.reshape(4, 2).astype(np.float32)
+                        
+                        if points is None:
+                            # Fallback to min area rectangle
+                            rect = cv2.minAreaRect(largest_contour)
+                            points = cv2.boxPoints(rect)
+                            points = np.float32(points)
+                        
+                        # Apply perspective transform
+                        rectified = four_point_transform(image, points)
+                        
+                        if rectified.shape[0] > 10 and rectified.shape[1] > 10:
+                            cropped_images.append(rectified)
+                            crop_info.append({
+                                'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                                'confidence': float(conf),
+                                'points': points.tolist()
+                            })
+                            print(f"Successfully cropped quadrat {i+1}, shape: {rectified.shape}")
+                            
+                except Exception as e:
+                    print(f"Error processing quadrat {i}: {str(e)}")
+                    continue
+        
+        # If no quadrats found, return original image
+        if not cropped_images:
+            print("No quadrats detected, using full image")
+            return [image], []
+        
+        return cropped_images, crop_info
+        
+    except Exception as e:
+        print(f"Error in auto_crop_quadrats: {str(e)}")
+        return [image], []
 
 def predict_segmentation(image):
     """Perform segmentation on input image using YOLO - match training pipeline"""
@@ -345,6 +501,7 @@ def health_check():
         "device": DEVICE,
         "segmentation_model_loaded": segmentation_model is not None,
         "cots_model_loaded": cots_model is not None,
+        "auto_crop_model_loaded": auto_crop_model is not None,
         "img_size": IMG_SIZE,
         "confidence_threshold": CONF_THRESHOLD,
         "cots_confidence_threshold": COTS_CONF_THRESHOLD
@@ -363,6 +520,9 @@ def segment_image():
         if segmentation_model is None:
             return jsonify({"error": "Segmentation model not loaded"}), 503
         
+        # Get optional parameters
+        use_auto_crop = request.form.get('use_auto_crop', 'true').lower() == 'true'
+        
         # Read and process image - match training preprocessing
         image_bytes = file.read()
         
@@ -376,29 +536,61 @@ def segment_image():
         # Convert BGR to RGB (OpenCV uses BGR, but PIL/YOLO expects RGB)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Perform segmentation
-        mask = predict_segmentation(image_rgb)
+        # Apply auto-crop if enabled and model is loaded
+        cropped_images = [image_rgb]
+        crop_info = []
         
-        # Create outputs
-        colored_mask = create_colored_mask(mask)
-        overlay = create_overlay(image_rgb, mask)
+        if use_auto_crop and auto_crop_model is not None:
+            print("Applying auto-crop to image...")
+            cropped_images, crop_info = auto_crop_quadrats(image_rgb, CROP_CONF_THRESHOLD)
+            print(f"Auto-crop produced {len(cropped_images)} images")
         
-        # Calculate statistics
-        stats = calculate_coral_statistics(mask)
+        # Process each cropped image
+        all_results = []
         
-        # Convert images to base64
+        for idx, cropped_image in enumerate(cropped_images):
+            # Perform segmentation on cropped image
+            mask = predict_segmentation(cropped_image)
+            
+            # Create outputs
+            colored_mask = create_colored_mask(mask)
+            overlay = create_overlay(cropped_image, mask)
+            
+            # Calculate statistics
+            stats = calculate_coral_statistics(mask)
+            
+            # Convert images to base64
+            cropped_b64 = image_to_base64(cropped_image)
+            mask_b64 = image_to_base64(colored_mask)
+            overlay_b64 = image_to_base64(overlay)
+            
+            result = {
+                "success": True,
+                "statistics": stats,
+                "images": {
+                    "original": f"data:image/png;base64,{cropped_b64}",
+                    "mask": f"data:image/png;base64,{mask_b64}",
+                    "overlay": f"data:image/png;base64,{overlay_b64}"
+                },
+                "crop_index": idx,
+                "is_cropped": len(cropped_images) > 1
+            }
+            
+            # Add crop info if available
+            if idx < len(crop_info):
+                result["crop_info"] = crop_info[idx]
+            
+            all_results.append(result)
+        
+        # If multiple quadrats were found, include original image with annotations
         original_b64 = image_to_base64(image_rgb)
-        mask_b64 = image_to_base64(colored_mask)
-        overlay_b64 = image_to_base64(overlay)
         
         response = {
             "success": True,
-            "statistics": stats,
-            "images": {
-                "original": f"data:image/png;base64,{original_b64}",
-                "mask": f"data:image/png;base64,{mask_b64}",
-                "overlay": f"data:image/png;base64,{overlay_b64}"
-            },
+            "results": all_results,
+            "total_quadrats": len(cropped_images),
+            "auto_crop_applied": use_auto_crop and len(cropped_images) > 1,
+            "original_image": f"data:image/png;base64,{original_b64}",
             "class_info": [
                 {
                     "id": class_id,
@@ -415,6 +607,8 @@ def segment_image():
         
     except Exception as e:
         print(f"Segmentation error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/cots-counter', methods=['POST'])
@@ -511,10 +705,12 @@ if __name__ == '__main__':
     print("🚀 Starting Coral Analysis API...")
     print(f"📊 Segmentation model loaded: {segmentation_model is not None}")
     print(f"⭐ COTS model loaded: {cots_model is not None}")
+    print(f"🔲 Auto-crop model loaded: {auto_crop_model is not None}")
     print(f"🎯 Device: {DEVICE}")
     print(f"🖼️ Image size: {IMG_SIZE}")
     print(f"🎯 Segmentation confidence threshold: {CONF_THRESHOLD}")
     print(f"⭐ COTS confidence threshold: {COTS_CONF_THRESHOLD}")
+    print(f"🔲 Crop confidence threshold: {CROP_CONF_THRESHOLD}")
     print(f"🪸 Number of coral classes: {len(CORAL_CLASSES)}")
     print(f"⭐ Number of COTS classes: {len(COTS_CLASSES)}")
     app.run(host='0.0.0.0', port=port)
