@@ -25,23 +25,20 @@ CORS(app, resources={
 })
 
 port = int(os.environ.get("PORT", 5000))
-# Configuration - Match training settings
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Model paths
 SEGMENTATION_MODEL_PATH = "models/segment/CORAL_segment.pt"
 COTS_MODEL_PATH = "models/cots/COTS_counter.pt"
-AUTO_CROP_MODEL_PATH = "models/crop/best.pt"  # Add auto-crop model path
+AUTO_CROP_MODEL_PATH = "models/crop/best.pt" 
 
-IMG_SIZE = 640  # Match training imgsz=640
-CONF_THRESHOLD = 0.25  # Standard YOLO confidence threshold
-COTS_CONF_THRESHOLD = 0.5  # Higher confidence for COTS detection
-CROP_CONF_THRESHOLD = 0.25  # Confidence threshold for quadrat detection
+IMG_SIZE = 640  
+CONF_THRESHOLD = 0.25  
+COTS_CONF_THRESHOLD = 0.5  
+CROP_CONF_THRESHOLD = 0.25 
 
-# Create directories
 os.makedirs('models/segment', exist_ok=True)
 os.makedirs('models/cots', exist_ok=True)
-os.makedirs('models/crop', exist_ok=True)  # Directory for crop model
+os.makedirs('models/crop', exist_ok=True)  
 os.makedirs('uploads', exist_ok=True)
 
 # Load models
@@ -72,7 +69,6 @@ def load_auto_crop_model():
         print(f"Failed to load auto-crop model: {e}")
         return None
 
-# Initialize models
 try:
     segmentation_model = load_segmentation_model()
     print("✅ Segmentation model loaded successfully!")
@@ -94,7 +90,6 @@ except Exception as e:
     print(f"❌ Auto-crop model loading failed: {e}")
     auto_crop_model = None
 
-# Coral class mapping - Match your training class names exactly
 CORAL_CLASSES = {
     0: {"name": "Acropora Branching", "display_name": "Acropora Branching", "color": [255, 0, 0], "category": "hard_coral"},
     1: {"name": "Acropora Tabulate", "display_name": "Acropora Tabulate", "color": [0, 255, 0], "category": "hard_coral"},
@@ -106,12 +101,10 @@ CORAL_CLASSES = {
     7: {"name": "mushroom", "display_name": "Mushroom", "color": [128, 0, 128], "category": "hard_coral"}
 }
 
-# COTS class mapping
 COTS_CLASSES = {
     0: {"name": "cots", "display_name": "Crown-of-Thorns Starfish", "color": [255, 0, 0]}
 }
 
-# Auto-crop functions (from your first code)
 def order_points(pts):
     """Order points starting from top-left"""
     rect = np.zeros((4, 2), dtype="float32")
@@ -173,7 +166,6 @@ def auto_crop_quadrats(image, conf_threshold=0.25):
         return [image], []
     
     try:
-        # Run auto-crop model
         results = auto_crop_model(image, conf=conf_threshold, verbose=False)
         
         cropped_images = []
@@ -189,18 +181,15 @@ def auto_crop_quadrats(image, conf_threshold=0.25):
                 try:
                     x1, y1, x2, y2, conf, cls = box
                     
-                    # Process mask
                     mask_binary = (mask > 0.5).astype(np.uint8) * 255
                     mask_resized = cv2.resize(mask_binary, (image.shape[1], image.shape[0]))
                     mask_enhanced = enhance_contour_detection(mask_resized)
                     
-                    # Find contours
                     contours, _ = cv2.findContours(mask_enhanced, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     
                     if contours:
                         largest_contour = max(contours, key=cv2.contourArea)
                         
-                        # Get quadrilateral points
                         epsilon = 0.02 * cv2.arcLength(largest_contour, True)
                         approx = cv2.approxPolyDP(largest_contour, epsilon, True)
                         
@@ -217,12 +206,10 @@ def auto_crop_quadrats(image, conf_threshold=0.25):
                                 points = approx_hull.reshape(4, 2).astype(np.float32)
                         
                         if points is None:
-                            # Fallback to min area rectangle
                             rect = cv2.minAreaRect(largest_contour)
                             points = cv2.boxPoints(rect)
                             points = np.float32(points)
                         
-                        # Apply perspective transform
                         rectified = four_point_transform(image, points)
                         
                         if rectified.shape[0] > 10 and rectified.shape[1] > 10:
@@ -238,7 +225,6 @@ def auto_crop_quadrats(image, conf_threshold=0.25):
                     print(f"Error processing quadrat {i}: {str(e)}")
                     continue
         
-        # If no quadrats found, return original image
         if not cropped_images:
             print("No quadrats detected, using full image")
             return [image], []
@@ -254,7 +240,6 @@ def predict_segmentation(image):
     if segmentation_model is None:
         raise Exception("Segmentation model not loaded")
     
-    # Convert numpy array to PIL Image if needed
     if isinstance(image, np.ndarray):
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
@@ -262,34 +247,28 @@ def predict_segmentation(image):
     else:
         image_pil = image
     
-    # YOLO inference with same settings as training
     results = segmentation_model.predict(
         image_pil, 
-        imgsz=IMG_SIZE,  # Match training imgsz=640
+        imgsz=IMG_SIZE, 
         conf=CONF_THRESHOLD,
         device=DEVICE,
         verbose=False
     )
     
-    # Get original image dimensions
     orig_height, orig_width = image.shape[:2] if isinstance(image, np.ndarray) else (image_pil.height, image_pil.width)
     
-    # Initialize mask with background class
     final_mask = np.zeros((orig_height, orig_width), dtype=np.uint8)
     
-    # Extract segmentation masks
     if results[0].masks is not None:
         masks = results[0].masks.data.cpu().numpy()  # Shape: (N, H, W)
         classes = results[0].boxes.cls.cpu().numpy().astype(int)  # Class indices
         
         for i, (mask, class_id) in enumerate(zip(masks, classes)):
-            # Resize mask to original image size
+
             mask_resized = cv2.resize(mask, (orig_width, orig_height), interpolation=cv2.INTER_NEAREST)
             
-            # Convert to binary mask
             binary_mask = (mask_resized > 0.5).astype(bool)
             
-            # Assign class ID to mask (add 1 since YOLO classes start at 0, but we want 1-8 for corals)
             final_mask[binary_mask] = class_id + 1
     
     return final_mask
@@ -299,7 +278,6 @@ def predict_cots_detection(image):
     if cots_model is None:
         raise Exception("COTS model not loaded")
     
-    # Convert numpy array to PIL Image if needed
     if isinstance(image, np.ndarray):
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
@@ -344,7 +322,6 @@ def draw_cots_detections(image, detections):
     
     draw = ImageDraw.Draw(image_pil)
     
-    # Try to load a font, fallback to default if not available
     try:
         font = ImageFont.truetype("arial.ttf", 20)
     except:
@@ -374,7 +351,6 @@ def draw_cots_detections(image, detections):
     return np.array(image_pil)
 
 def create_colored_mask(mask):
-    """Convert mask to colored image"""
     colored_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
     
     # Background stays black (0)
@@ -386,14 +362,12 @@ def create_colored_mask(mask):
     return colored_mask
 
 def create_overlay(image, mask, alpha=0.5):
-    """Create overlay of original image and mask"""
     colored_mask = create_colored_mask(mask)
     
     # Ensure image is in correct format
     if len(image.shape) == 3 and image.shape[2] == 3:
         overlay = cv2.addWeighted(image.astype(np.uint8), 1 - alpha, colored_mask, alpha, 0)
     else:
-        # Convert grayscale to RGB if needed
         image_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB) if len(image.shape) == 2 else image
         overlay = cv2.addWeighted(image_rgb.astype(np.uint8), 1 - alpha, colored_mask, alpha, 0)
     
